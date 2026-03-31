@@ -8,8 +8,6 @@ from autogen_core import Image
 from dotenv import load_dotenv
 
 load_dotenv()  # loads .env from current directory
-
-from autogen_core.models import UserMessage
 from autogen_ext.models.anthropic import AnthropicChatCompletionClient
 
 
@@ -23,8 +21,14 @@ async def main() -> None:
         api_key=api_key,
     )
 
-    assistant = AssistantAgent(name="assistant", model_client=anthropic_client)
-    await Console(assistant.run_stream(task="What is the capital of India?"))
+    assistant = AssistantAgent(name = "multimodalassistant", model_client=anthropic_client)
+    image = Image.from_file("image.jpeg")
+    message = MultiModalMessage(
+        content=["What do you see in this image?", image],
+        source="user"
+    )
+
+    await Console(assistant.run_stream(task=message))
     await anthropic_client.close()
 
 asyncio.run(main())
