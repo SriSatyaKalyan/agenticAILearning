@@ -1,5 +1,4 @@
 import asyncio
-import json
 import os
 
 from autogen_agentchat.agents import AssistantAgent, UserProxyAgent
@@ -8,7 +7,6 @@ from autogen_agentchat.teams import SelectorGroupChat, RoundRobinGroupChat
 from autogen_agentchat.ui import Console
 from autogen_ext.models.anthropic import AnthropicChatCompletionClient
 from autogen_ext.tools.mcp import StdioServerParams, McpWorkbench
-
 
 async def main():
     api_key = os.getenv("ANTHROPIC_API_KEY")
@@ -20,18 +18,12 @@ async def main():
         api_key=api_key,
     )
 
-    # fs_mcp_params = StdioServerParams(command = "npx",
-    #                                   args = [ "-y",
-    #                                       "@modelcontextprotocol/server-filesystem",
-    #                                       "/Users/srisatyakalyankallepalli/Desktop/" ],
-    #                                   read_timeout_seconds = 10
-    #                   )
     fs_mcp_params = StdioServerParams(
         command="npx",
         args=["-y",
               "@modelcontextprotocol/server-filesystem",
-              "/Users/srisatyakalyankallepalli/Desktop/",
-              "/Users/srisatyakalyankallepalli/Documents/GitHub/python/agenticAI/"],  # Add project directory
+              os.getcwd()
+              ],  # Add project directory
         read_timeout_seconds=10
     )
     fs_workbench = McpWorkbench(fs_mcp_params)
