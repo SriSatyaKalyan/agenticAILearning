@@ -1,5 +1,4 @@
 import asyncio
-import json
 import os
 
 from autogen_agentchat.agents import AssistantAgent, UserProxyAgent
