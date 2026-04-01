@@ -10,4 +10,4 @@ Important : Use browser_wait_for to wait for success/error messages
    - Verify expected outcomes as specified by BugAnalyst
 
 Always follow the exact timing and waiting instructions provided
-Complete ALL steps before saying 'TESTING COMPLETE, Execute each step fully, don't rush to completion
+Complete ALL steps before saying 'TESTING COMPLETE', Execute each step fully, don't rush to completion
