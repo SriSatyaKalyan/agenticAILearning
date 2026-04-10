@@ -84,7 +84,7 @@ async def main() -> None:
             name="bugAnalyst",
             model_client=anthropic_client,
             workbench=jira,
-            system_message=load_system_message("bug_analyst_prompt.txt"),
+            system_message=load_system_message("../assets/prompts/bug_analyst_prompt.txt"),
         )
 
         # second assistant agent - Playwright
@@ -92,7 +92,7 @@ async def main() -> None:
             name="playwrightAgent",
             model_client=anthropic_client,
             workbench=playwright,
-            system_message=load_system_message("playwright_analyst_prompt.txt"),
+            system_message=load_system_message("../assets/prompts/playwright_analyst_prompt.txt"),
         )
 
         task = """

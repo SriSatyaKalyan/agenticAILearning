@@ -21,8 +21,8 @@ async def main() -> None:
         api_key=api_key,
     )
 
-    assistant = AssistantAgent(name = "multimodalassistant", model_client=anthropic_client)
-    image = Image.from_file("image.jpeg")
+    assistant = AssistantAgent(name="multimodalassistant", model_client=anthropic_client)
+    image = Image.from_file("../assets/images/image.jpeg")
     message = MultiModalMessage(
         content=["What do you see in this image?", image],
         source="user"

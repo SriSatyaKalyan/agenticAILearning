@@ -27,10 +27,10 @@ async def main():
     state = await agentI.save_state()
 
     # state-saving
-    with open("memory.json", "w") as f:
+    with open("../data/memory.json", "w") as f:
         json.dump(state, f, default=str)
 
-    with open("memory.json", "r") as f:
+    with open("../data/memory.json", "r") as f:
         saved_state = json.load(f)
 
     await agentII.load_state(saved_state)
