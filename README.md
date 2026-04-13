@@ -1,6 +1,7 @@
 # Agentic AI Learning
 
-A collection of agent-based AI examples and utilities demonstrating various patterns and use cases for autonomous agents.
+A collection of agent-based AI examples and utilities demonstrating various patterns and use cases for autonomous
+agents.
 
 ## Project Structure
 
@@ -34,18 +35,21 @@ agenticAI/
 ## Installation
 
 1. Clone the repository:
+
 ```bash
 git clone <repository-url>
 cd agenticAI
 ```
 
 2. Create a virtual environment:
+
 ```bash
 python -m venv .venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 ```
 
 3. Install dependencies:
+
 ```bash
 pip install -r requirements.txt
 # or for development
@@ -55,13 +59,14 @@ pip install -e ".[dev]"
 ## Configuration
 
 1. Copy `.env.example` to `.env` and fill in your API keys:
+
 ```bash
 cp .env.example .env
 ```
 
 2. Required environment variables:
-   - `ANTHROPIC_API_KEY`: Your Anthropic API key
-   - For JIRA examples: `JIRA_URL`, `JIRA_USERNAME`, `JIRA_API_TOKEN`
+    - `ANTHROPIC_API_KEY`: Your Anthropic API key
+    - For JIRA examples: `JIRA_URL`, `JIRA_USERNAME`, `JIRA_API_TOKEN`
 
 ## Usage
 
@@ -97,9 +102,17 @@ python examples/jira_scenario.py
 
 ## Development
 
+### Screenshots
+
+- These screenshots are pulled from my JIRA Cloud. This is purely for reference and not intended to demonstrate how bugs
+  are to be created
+  ![img.png](img.png)
+- I have limited the number of bugs created strictly to 1 so as to not waste my API credits.
+
 ### Code Style
 
 This project follows Python best practices:
+
 - Snake case naming for files and variables
 - Proper package structure with `__init__.py` files
 - Type hints where appropriate

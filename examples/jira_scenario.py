@@ -1,65 +1,37 @@
 import asyncio
+import sys
 import os
-import anthropic as anthropic_sdk
-import random
 
-from autogen_agentchat.agents import AssistantAgent, UserProxyAgent
+from autogen_agentchat.base import TaskResult
+
+# Add parent directory to path for imports
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from autogen_agentchat.agents import AssistantAgent
 from autogen_agentchat.conditions import TextMentionTermination
-from autogen_agentchat.messages import MultiModalMessage
 from autogen_agentchat.teams import RoundRobinGroupChat
+
+# from autogen_agentchat.messages import TaskResult
 from autogen_agentchat.ui import Console
-from autogen_core import Image
 from autogen_ext.tools.mcp import StdioServerParams, McpWorkbench
 from dotenv import load_dotenv
 
+from src.agentic_ai.utils import (
+    load_system_message,
+    get_required_env,
+    create_anthropic_client,
+    AnthropicModels,
+)
+
 load_dotenv()  # loads .env from current directory
-
-from autogen_ext.models.anthropic import AnthropicChatCompletionClient  # noqa: E402
-
-
-async def run_with_retry(team, task, max_retries=5):
-    for attempt in range(max_retries):
-        try:
-            await Console(team.run_stream(task=task))
-            return
-        except anthropic_sdk.RateLimitError:
-            if attempt == max_retries - 1:
-                raise
-            wait = (2**attempt) + random.uniform(0, 1)  # noqa: F821
-            print(f"[Rate Limited] Retry {attempt + 1}/{max_retries} in {wait:.1f}s...")
-            await asyncio.sleep(wait)
 
 
 async def main() -> None:
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise RuntimeError("ANTHROPIC_API_KEY not found")
+    print("🚀 Starting Jira Scenario with Bug Analyst and Playwright Agent")
 
-    # haiku_client = AnthropicChatCompletionClient(
-    #     model="claude-haiku-4-5",
-    #     api_key=api_key,
-    # )
-
-    anthropic_client = AnthropicChatCompletionClient(
-        model="claude-sonnet-4-6",  # this model allows tooling
-        api_key=api_key,
-    )
-
-    def get_required_env(key: str) -> str:
-        value = os.getenv(key)
-        if not value:
-            raise RuntimeError(f"{key} environment variable not found")
-        return value
-
-    # Function to read system message from file
-    def load_system_message(filename: str) -> str:
-        try:
-            with open(filename, "r", encoding="utf-8") as f:
-                return f.read().strip()
-        except FileNotFoundError:
-            raise RuntimeError(f"System message file '{filename}' not found")
-        except Exception as e:
-            raise RuntimeError(f"Error reading system message file '{filename}': {e}")
+    # Use utility function to create Anthropic client - API key automatically from env
+    anthropic_client = create_anthropic_client(AnthropicModels.SONNET)
+    print("✅ Anthropic client created")
 
     jira_server_params = StdioServerParams(
         command="uvx",
@@ -68,6 +40,7 @@ async def main() -> None:
             "JIRA_URL": get_required_env("JIRA_URL"),
             "JIRA_USERNAME": get_required_env("JIRA_USERNAME"),
             "JIRA_API_TOKEN": get_required_env("JIRA_API_TOKEN"),
+            "TOOLSETS": "all",  # Explicit toolsets to avoid deprecation warning
         },
         read_timeout_seconds=60,
     )
@@ -78,44 +51,96 @@ async def main() -> None:
     )
     playwright_workbench = McpWorkbench(playwright_server_params)
 
+    # Get script directory for relative paths - fix the path calculation
+    script_dir = os.path.dirname(os.path.abspath(__file__))  # This gets examples/
+    parent_dir = os.path.dirname(script_dir)  # This gets the root project dir
+
+    print("📁 Loading prompt files...")
+
     async with jira_workbench as jira, playwright_workbench as playwright:
+        print("🔗 Connected to Jira and Playwright workbenches")
+
         # first assistant agent - JIRA
-        manualEngineer = AssistantAgent(
+        manual_engineer = AssistantAgent(
             name="bugAnalyst",
             model_client=anthropic_client,
             workbench=jira,
-            system_message=load_system_message("../assets/prompts/bug_analyst_prompt.txt"),
+            system_message=load_system_message(
+                os.path.join(parent_dir, "assets", "prompts", "bug_analyst_prompt.txt")
+            ),
         )
 
         # second assistant agent - Playwright
-        automationEngineer = AssistantAgent(
+        automation_engineer = AssistantAgent(
             name="playwrightAgent",
             model_client=anthropic_client,
             workbench=playwright,
-            system_message=load_system_message("../assets/prompts/playwright_analyst_prompt.txt"),
+            system_message=load_system_message(
+                os.path.join(
+                    parent_dir, "assets", "prompts", "playwright_analyst_prompt.txt"
+                )
+            ),
         )
 
+        # Use a direct task instead of loading from file to avoid termination issues
         task = """
-            Bug Analyst:
-            1. Search for recent bugs in the project
-            2. Then design a stable user flow that can be used as a smoke test
-            3. Use REAL URLs like: "https://rahulshettyacademy.com/seleniumPractise/#/"
+        Bug Analyst: Please search for recent bugs in the KAN project and create a comprehensive smoke test for the GreenKart application. 
+        Focus on discount code functionality and provide detailed test steps. When done, say 'HANDOFF TO AUTOMATION'.
+        Playwright Agent: Wait for the Bug Analyst handoff, then implement the smoke test using Playwright. 
+        Execute all test steps and verify results. When finished, say 'TESTING COMPLETE'.
+        """
 
-            Playwright Agent:
-            1. Implement the smoke test in Playwright based on the user flow designed by the Bug Analyst
-            2. Ensure the test is stable and can be run multiple times (atleast 2) without failure
-            3. Build a Playwright test with appropriate selectors, assertions and best practices
-          """
+        print(f"📋 Task created: {len(task)} characters")
 
         team = RoundRobinGroupChat(
-            participants=[manualEngineer, automationEngineer],
+            participants=[manual_engineer, automation_engineer],
             termination_condition=TextMentionTermination("TESTING COMPLETE"),
-            max_turns=6,
+            max_turns=10,  # Increased for proper conversation flow
         )
 
-        await run_with_retry(team, task=task)
+        print("🎬 Starting agent conversation...")
+        print("-" * 80)
+
+        # Verify tools are available on each agent's workbench
+        jira_tools = await jira.list_tools()
+        playwright_tools = await playwright.list_tools()
+        print(f"🔧 Jira workbench tools available: {len(jira_tools)}")
+        for t in jira_tools:
+            print(f"   - {t.name}")
+        print(f"🎭 Playwright workbench tools available: {len(playwright_tools)}")
+        print("-" * 80)
+
+        # Console streams every message type (TextMessage, ToolCallMessage,
+        # ToolCallResultMessage, TaskResult) with full content as they arrive.
+        result: TaskResult = await Console(team.run_stream(task=task))
+
+        # Full structured dump of the completed conversation so nothing is hidden.
+        print("\n" + "=" * 80)
+        print("📊 FULL CONVERSATION DUMP")
+        print("=" * 80)
+        for i, msg in enumerate(result.messages, 1):
+            source = getattr(msg, "source", "system")
+            msg_type = type(msg).__name__
+            content = getattr(msg, "content", None)
+            print(f"\n[{i}] {msg_type} | source={source}")
+            if content is None:
+                print("  <no content>")
+            elif isinstance(content, str):
+                print(content)
+            elif isinstance(content, list):
+                for item in content:
+                    print(f"  {item}")
+            else:
+                print(f"  {content}")
+        print("=" * 80)
+        print(
+            f"\n✅ Conversation completed — {len(result.messages)} total messages"
+            f"  |  stop_reason={result.stop_reason}"
+        )
 
     await anthropic_client.close()
+    print("🏁 Jira scenario completed")
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
