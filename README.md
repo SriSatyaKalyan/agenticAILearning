@@ -1,137 +1,216 @@
-# Agentic AI Learning
+# Agentic AI — Multi-Agent Automation with Claude + AutoGen
 
-A collection of agent-based AI examples and utilities demonstrating various patterns and use cases for autonomous
-agents.
+A collection of autonomous agent examples built with [AutoGen](https://github.com/microsoft/autogen) and [Anthropic Claude](https://www.anthropic.com). The flagship example (`jira_scenario_II.py`) demonstrates a two-agent pipeline that reads live Jira bugs, executes them against a real website using a headless browser, and generates a production-ready Playwright test file — all without human intervention.
 
-## Project Structure
+---
+
+## What the Flagship Scenario Does
 
 ```
-agenticAI/
-├── src/                          # Source code package
-│   └── agentic_ai/               # Main package
-│       └── __init__.py
-├── examples/                     # Example scripts demonstrating different concepts
-│   ├── __init__.py
-│   ├── text_messaging.py         # Basic text-based agent interaction
-│   ├── multimodal_messaging.py   # Agent with image processing capabilities
-│   ├── round_robin_agents.py     # Multiple agents working in sequence
-│   ├── round_robin_with_human.py # Human-in-the-loop agent interactions
-│   ├── state_saving.py           # Persistent state management
-│   ├── selector_group_chat.py    # Dynamic agent selection
-│   ├── multimodal_web_surfer.py  # Web automation with multimodal input
-│   ├── tooling_example.py        # Tool-using agents
-│   └── jira_scenario.py          # JIRA integration example
-├── tests/                        # Test files (to be added)
-├── docs/                         # Documentation
-├── assets/                       # Static assets
-│   ├── images/                   # Image files
-│   └── prompts/                  # System prompt files
-├── data/                         # Data files and outputs
-├── requirements.txt              # Python dependencies
-├── pyproject.toml               # Modern Python project configuration
-└── README.md                    # This file
+Jira (KAN project)
+       │
+       ▼
+ Bug Analyst Agent          ← Claude Sonnet; reads bugs, produces numbered repro steps
+       │  handoff
+       ▼
+ Playwright Agent           ← Claude Sonnet + Playwright MCP; executes steps in a live browser
+       │
+       ▼
+ output/tests/greenkart.spec.ts   ← production-quality TypeScript test file, saved to disk
 ```
+
+---
+
+## Prerequisites
+
+| Tool | Version | Notes |
+|------|---------|-------|
+| Python | 3.11+ | `python --version` to check |
+| Node.js | 18+ | Required for Playwright MCP (`npx`) and `uvx` |
+| npm / npx | bundled with Node | `npx --version` to check |
+| uv / uvx | latest | `pip install uv` then `uvx --version` |
+
+---
 
 ## Installation
 
-1. Clone the repository:
+### 1. Clone the repo
 
 ```bash
-git clone <repository-url>
-cd agenticAI
+git clone https://github.com/SriSatyaKalyan/python-agenticAI.git
+cd python-agenticAI
 ```
 
-2. Create a virtual environment:
+### 2. Create and activate a virtual environment
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+source .venv/bin/activate        # macOS / Linux
+# .venv\Scripts\activate         # Windows
 ```
 
-3. Install dependencies:
+### 3. Install Python dependencies
 
 ```bash
-pip install -r requirements.txt
-# or for development
-pip install -e ".[dev]"
+pip install autogen-agentchat autogen-core "autogen-ext[anthropic,mcp]" anthropic python-dotenv
 ```
+
+> **Note:** The `autogen-ext[anthropic,mcp]` extra pulls in the Anthropic chat client and the MCP workbench that the Jira and Playwright tools run through.
+
+### 4. Install Playwright browsers (first run only)
+
+```bash
+npx playwright install chromium
+```
+
+The Playwright MCP server (`@playwright/mcp`) is fetched automatically via `npx` at runtime — no separate install needed.
+
+### 5. Install the Jira MCP server (first run only)
+
+```bash
+pip install uv          # if not already installed
+uvx mcp-atlassian --help   # this caches the package for subsequent runs
+```
+
+---
+
+## Getting Your API Tokens
+
+### Anthropic API Key
+
+1. Go to [console.anthropic.com](https://console.anthropic.com) and sign in (or create a free account).
+2. Navigate to **API Keys** in the left sidebar.
+3. Click **Create Key**, give it a name, and copy the key — it starts with `sk-ant-`.
+4. You will not be shown this key again, so save it immediately.
+
+> The free tier includes a usage limit. If you hit `429 RateLimitError`, the `ThrottledClient` in the code will back off and retry automatically.
+
+### Jira API Token
+
+1. Log in to [id.atlassian.com/manage-profile/security/api-tokens](https://id.atlassian.com/manage-profile/security/api-tokens).
+2. Click **Create API token**, name it, and copy the value.
+3. Your `JIRA_URL` is `https://<your-subdomain>.atlassian.net` — find it in the browser address bar when logged in to Jira.
+4. Your `JIRA_USERNAME` is the email address you use to log in to Atlassian.
+
+> The scenario queries project `KAN` by default. If your project uses a different key, change the `jql` string in `examples/jira_scenario_II.py` at line ~292.
+
+---
 
 ## Configuration
 
-1. Copy `.env.example` to `.env` and fill in your API keys:
+Copy the example env file and fill in your values:
 
 ```bash
 cp .env.example .env
 ```
 
-2. Required environment variables:
-    - `ANTHROPIC_API_KEY`: Your Anthropic API key
-    - For JIRA examples: `JIRA_URL`, `JIRA_USERNAME`, `JIRA_API_TOKEN`
+Open `.env` in any text editor and set:
 
-## Usage
-
-### Running Examples
-
-Each example can be run independently from the project root:
-
-```bash
-# Basic text messaging
-python examples/text_messaging.py
-
-# Multimodal messaging with images
-python examples/multimodal_messaging.py
-
-# Round-robin agent conversation
-python examples/round_robin_agents.py
-
-# JIRA integration (requires JIRA credentials)
-python examples/jira_scenario.py
+```dotenv
+ANTHROPIC_API_KEY=sk-ant-api03-...          # from console.anthropic.com
+JIRA_URL=https://your-subdomain.atlassian.net
+JIRA_USERNAME=your.email@example.com
+JIRA_API_TOKEN=ATATT3x...                   # from id.atlassian.com
 ```
 
-### Example Descriptions
+> **Never commit `.env` to git.** It is already listed in `.gitignore`.
 
-- **text_messaging.py**: Demonstrates basic agent-user text interaction
-- **multimodal_messaging.py**: Shows how to process images with agents
-- **round_robin_agents.py**: Multiple agents collaborating in sequence
-- **round_robin_with_human.py**: Human-in-the-loop agent workflows
-- **state_saving.py**: Persistent conversation state management
-- **selector_group_chat.py**: Dynamic agent selection based on context
-- **multimodal_web_surfer.py**: Web automation with multimodal capabilities
-- **tooling_example.py**: Agents that can use external tools
-- **jira_scenario.py**: Real-world JIRA integration for bug analysis
+---
 
-## Development
+## Running the Flagship Scenario
 
-### Screenshots
+```bash
+python examples/jira_scenario_II.py
+```
 
-- These screenshots are pulled from my JIRA Cloud. This is purely for reference and not intended to demonstrate how bugs
-  are to be created
-  ![img.png](img.png)
-- I have limited the number of bugs created strictly to 1 so as to not waste my API credits.
+The script will:
 
-### Code Style
+1. Connect to Jira and fetch the 5 most recent bugs in the `KAN` project.
+2. The Bug Analyst agent translates them into a numbered repro script.
+3. The Playwright agent opens a real Chromium browser and executes the steps live.
+4. A TypeScript `.spec.ts` test file is written to `output/tests/greenkart.spec.ts`.
 
-This project follows Python best practices:
+Expected runtime: **5–15 minutes** (the `ThrottledClient` paces API calls to stay within the free-tier 30k token/min limit).
 
-- Snake case naming for files and variables
-- Proper package structure with `__init__.py` files
-- Type hints where appropriate
-- Comprehensive docstrings
+---
 
-### Adding New Examples
+## Running Other Examples
 
-1. Create new files in the `examples/` directory
-2. Follow the naming convention: `descriptive_name.py`
-3. Include proper imports and error handling
-4. Add documentation and usage examples
+```bash
+# Basic Claude conversation
+python examples/text_messaging.py
 
-## Contributing
+# Agent with image input
+python examples/multimodal_messaging.py
 
-1. Follow the existing code style
-2. Add tests for new functionality
-3. Update documentation as needed
-4. Submit pull requests for review
+# Two agents taking turns
+python examples/round_robin_agents.py
+
+# Human in the loop
+python examples/round_robin_with_human.py
+
+# Web automation with screenshots
+python examples/multimodal_web_surfer.py
+
+# Agents with tools
+python examples/tooling_example.py
+```
+
+Only `ANTHROPIC_API_KEY` is required for the examples above. The Jira credentials are only needed for `jira_scenario.py` and `jira_scenario_II.py`.
+
+---
+
+## Project Structure
+
+```
+agenticAI/
+├── examples/
+│   ├── jira_scenario_II.py      ← flagship: Jira → Playwright → .spec.ts
+│   ├── jira_scenario.py
+│   ├── text_messaging.py
+│   ├── multimodal_messaging.py
+│   ├── round_robin_agents.py
+│   ├── round_robin_with_human.py
+│   ├── state_saving.py
+│   ├── selector_group_chat.py
+│   ├── multimodal_web_surfer.py
+│   └── tooling_example.py
+├── assets/
+│   └── prompts/
+│       ├── bug_analyst_prompt.txt       ← system prompt for the Bug Analyst agent
+│       └── playwright_analyst_prompt.txt ← system prompt for the Playwright agent
+├── src/agentic_ai/
+│   ├── config.py                ← model names, path helpers
+│   └── utils.py                 ← shared utilities (retry, env helpers)
+├── output/
+│   └── tests/
+│       └── greenkart.spec.ts    ← generated test file (created at runtime)
+├── .env.example                 ← copy this to .env and fill in your keys
+├── requirements.txt
+└── README.md
+```
+
+---
+
+## Troubleshooting
+
+**`ANTHROPIC_API_KEY not found`**
+Ensure `.env` is in the project root and you are running the script from the project root directory.
+
+**`429 RateLimitError` not recovering**
+The `ThrottledClient` retries up to 6 times with exponential backoff. If it still fails, your API quota for the minute is exhausted — wait 60 seconds and rerun.
+
+**Jira returns no bugs**
+Verify your `JIRA_URL` ends with `.atlassian.net` (no trailing slash) and that the project key `KAN` exists. Check `JIRA_USERNAME` matches your Atlassian login email exactly.
+
+**`npx: command not found`**
+Install Node.js from [nodejs.org](https://nodejs.org) (LTS version). `npx` is bundled with `npm` which ships with Node.
+
+**`uvx: command not found`**
+Run `pip install uv` and then retry.
+
+---
 
 ## License
 
-MIT License - see LICENSE file for details.
+MIT — see [LICENSE](LICENSE) for details.
