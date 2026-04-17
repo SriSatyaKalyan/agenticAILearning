@@ -74,7 +74,13 @@ logs/
 .playwright-mcp/
 playwright-report/
 test-results/
+examples/*.png
 
 # Node modules (for playwright)
 node_modules/
-examples
+
+# Log files
+output/logs/
+
+# Scripts output
+scripts/__pycache__/

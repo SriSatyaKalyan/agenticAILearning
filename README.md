@@ -165,8 +165,9 @@ Only `ANTHROPIC_API_KEY` is required for the examples above. The Jira credential
 ```
 agenticAI/
 ├── examples/
-│   ├── jira_scenario_II.py      ← flagship: Jira → Playwright → .spec.ts
+│   ├── jira_scenario_II.py       ← flagship: Jira → Playwright → .spec.ts
 │   ├── jira_scenario.py
+│   ├── demo.py                   ← project setup validator
 │   ├── text_messaging.py
 │   ├── multimodal_messaging.py
 │   ├── round_robin_agents.py
@@ -175,17 +176,31 @@ agenticAI/
 │   ├── selector_group_chat.py
 │   ├── multimodal_web_surfer.py
 │   └── tooling_example.py
+├── scripts/                      ← development & diagnostic utilities
+│   ├── diagnose_agents.py        ← verify agent + workbench wiring
+│   ├── diagnose_jira.py          ← verify Jira MCP connectivity
+│   ├── minimal_agent_test.py     ← minimal two-agent smoke run
+│   ├── test_bug_analyst.py       ← isolated Bug Analyst agent run
+│   ├── test_jira_connection.py   ← basic Jira connection check
+│   ├── test_kan_access.py        ← KAN project access check
+│   ├── test_focused_jira_access.py
+│   ├── test_improved_jira_access.py
+│   └── test_improved_search.py
 ├── assets/
+│   ├── images/
 │   └── prompts/
-│       ├── bug_analyst_prompt.txt       ← system prompt for the Bug Analyst agent
+│       ├── bug_analyst_prompt.txt        ← system prompt for the Bug Analyst agent
 │       └── playwright_analyst_prompt.txt ← system prompt for the Playwright agent
 ├── src/agentic_ai/
-│   ├── config.py                ← model names, path helpers
-│   └── utils.py                 ← shared utilities (retry, env helpers)
+│   ├── config.py                 ← model names, path helpers
+│   └── utils.py                  ← shared utilities (retry, env helpers)
+├── tests/                        ← pytest unit tests
+│   ├── test_jira_scenario.py
+│   └── test_utils.py
 ├── output/
 │   └── tests/
-│       └── greenkart.spec.ts    ← generated test file (created at runtime)
-├── .env.example                 ← copy this to .env and fill in your keys
+│       └── greenkart.spec.ts     ← generated test file (created at runtime)
+├── .env.example                  ← copy this to .env and fill in your keys
 ├── requirements.txt
 └── README.md
 ```
