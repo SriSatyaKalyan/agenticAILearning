@@ -1,5 +1,6 @@
 import asyncio
 import os
+import re
 import time
 import anthropic as anthropic_sdk
 import random
@@ -31,25 +32,67 @@ from autogen_ext.models.anthropic import AnthropicChatCompletionClient  # noqa: 
 # error — that way the team session (and the open browser) stay alive.
 # ---------------------------------------------------------------------------
 class ThrottledClient:
-    """Wraps AnthropicChatCompletionClient with proactive pacing and
+    """Wraps AnthropicChatCompletionClient with dynamic TPM-aware pacing and
     transparent 429-retry so rate limits never crash the team session.
+
+    Instead of a fixed per-call delay, tracks actual token usage in a rolling
+    60-second window and only blocks when the budget is genuinely exhausted.
+    This lets fast, low-token calls (e.g. browser_navigate) proceed immediately
+    while still protecting against high-token calls (e.g. browser_snapshot).
     """
+
+    # Never wait longer than this even if the API asks for more.
+    _MAX_BACKOFF = 90.0
+
+    # browser_snapshot YAML can exceed 200k tokens per result.
+    # We cap each tool-result string at this many chars (~20k tokens) so the
+    # buffer never approaches the 1M context-window limit.
+    _MAX_TOOL_RESULT_CHARS = 80_000
 
     def __init__(
         self,
         client: AnthropicChatCompletionClient,
-        delay_seconds: float,
+        tpm_limit: int = 30_000,
+        safety_buffer: int = 3_000,
+        min_delay: float = 2.0,
         max_retries: int = 6,
     ):
         self._client = client
-        self._delay = delay_seconds
+        self._tpm_limit = tpm_limit
+        # Tokens to keep in reserve so we never cut it too close.
+        self._safety_buffer = safety_buffer
+        # Minimum gap between consecutive calls even when budget is plentiful.
+        self._min_delay = min_delay
         self._max_retries = max_retries
+        self._window: list[tuple[float, int]] = []  # (monotonic_ts, tokens)
         self._last_call: float = 0.0
 
-    # Never wait longer than this even if the API asks for more.
-    # Anthropic sends the full rolling-window reset time (can be ~20 min)
-    # but for a per-minute TPM limit, 90 s is always enough.
-    _MAX_BACKOFF = 90.0
+    def _used_in_window(self) -> int:
+        """Return tokens consumed in the past 60 s; prune stale entries."""
+        cutoff = time.monotonic() - 60.0
+        self._window = [(ts, t) for ts, t in self._window if ts > cutoff]
+        return sum(t for _, t in self._window)
+
+    def _record_tokens(self, tokens: int) -> None:
+        self._window.append((time.monotonic(), tokens))
+
+    async def _wait_for_capacity(self, estimated_tokens: int = 8_000) -> None:
+        """Block until the rolling window has room for at least estimated_tokens."""
+        while True:
+            used = self._used_in_window()
+            available = self._tpm_limit - self._safety_buffer - used
+            if available >= estimated_tokens:
+                break
+            # Wait until the oldest entry in the window expires.
+            wait = 10.0
+            if self._window:
+                oldest_ts = self._window[0][0]
+                wait = max(2.0, oldest_ts + 60.1 - time.monotonic())
+            print(
+                f"[Throttle] TPM near limit ({used:,}/{self._tpm_limit:,} tokens used) "
+                f"— waiting {wait:.1f}s for window to clear..."
+            )
+            await asyncio.sleep(wait)
 
     def _retry_after(self, exc: anthropic_sdk.RateLimitError) -> float:
         """Return seconds to wait, capped at _MAX_BACKOFF.
@@ -77,11 +120,6 @@ class ThrottledClient:
         except Exception:
             pass
         return 65.0  # safe default when headers are absent
-
-    # browser_snapshot YAML can exceed 200k tokens per result.
-    # We cap each tool-result string at this many chars (~20k tokens) so the
-    # buffer never approaches the 1M context-window limit.
-    _MAX_TOOL_RESULT_CHARS = 80_000
 
     def _trim_messages(self, messages):
         """Truncate oversized FunctionExecutionResult content in-place (copies)
@@ -112,18 +150,30 @@ class ThrottledClient:
         # ── trim oversized tool results before they hit the context window ─
         messages = self._trim_messages(messages)
 
-        # ── proactive pacing ──────────────────────────────────────────────
+        # ── minimum gap between consecutive calls ─────────────────────────
         elapsed = time.monotonic() - self._last_call
-        if elapsed < self._delay:
-            wait = self._delay - elapsed
-            print(f"[Throttle] Pacing — waiting {wait:.1f}s before next LLM call...")
-            await asyncio.sleep(wait)
+        if elapsed < self._min_delay:
+            await asyncio.sleep(self._min_delay - elapsed)
+
+        # ── token-budget gate: only block when window is nearly full ──────
+        await self._wait_for_capacity()
 
         # ── call with internal 429 retry (keeps the team session alive) ───
         for attempt in range(self._max_retries):
             self._last_call = time.monotonic()
             try:
-                return await self._client.create(messages, **kwargs)
+                result = await self._client.create(messages, **kwargs)
+                # Record actual token usage to keep the window accurate.
+                if hasattr(result, "usage") and result.usage:
+                    tokens = (getattr(result.usage, "prompt_tokens", 0) or 0) + \
+                             (getattr(result.usage, "completion_tokens", 0) or 0)
+                    if tokens:
+                        self._record_tokens(tokens)
+                        print(
+                            f"[Throttle] {tokens:,} tokens this call "
+                            f"({self._used_in_window():,}/{self._tpm_limit:,} used in window)"
+                        )
+                return result
             except anthropic_sdk.RateLimitError as exc:
                 if attempt == self._max_retries - 1:
                     raise
@@ -140,16 +190,51 @@ class ThrottledClient:
         return getattr(self._client, name)
 
 
+class FilteredWorkbench:
+    """Proxy for McpWorkbench that hides specific tools from the LLM.
+
+    The LLM never sees the excluded tool names, so it cannot call them.
+    All other methods (call_tool, async context manager, etc.) delegate
+    transparently to the underlying workbench.
+    """
+
+    def __init__(self, workbench: McpWorkbench, exclude: set[str]):
+        self._workbench = workbench
+        self._exclude = exclude
+
+    async def __aenter__(self):
+        await self._workbench.__aenter__()
+        return self
+
+    async def __aexit__(self, *args):
+        return await self._workbench.__aexit__(*args)
+
+    @staticmethod
+    def _tool_name(t) -> str:
+        return t.name if hasattr(t, "name") else t["name"]
+
+    async def list_tools(self):
+        tools = await self._workbench.list_tools()
+        hidden = [self._tool_name(t) for t in tools if self._tool_name(t) in self._exclude]
+        if hidden:
+            print(f"[FilteredWorkbench] Hiding from LLM: {hidden}")
+        return [t for t in tools if self._tool_name(t) not in self._exclude]
+
+    def __getattr__(self, name):
+        return getattr(self._workbench, name)
+
+
 def _is_rate_limit(exc: BaseException) -> bool:
     return isinstance(exc, anthropic_sdk.RateLimitError) or (
         isinstance(exc, RuntimeError) and "rate_limit" in str(exc).lower()
     )
 
 
-async def run_with_retry(team, task, max_retries=5):
+async def run_with_retry(team, task, output_path: str, max_retries=5):
     for attempt in range(max_retries):
         try:
-            await Console(team.run_stream(task=task))
+            result = await Console(team.run_stream(task=task))
+            _save_test_file(result, output_path)
             return
         except BaseException as exc:
             if not _is_rate_limit(exc):
@@ -159,6 +244,27 @@ async def run_with_retry(team, task, max_retries=5):
             wait = 60 + (2**attempt) + random.uniform(0, 5)
             print(f"[Rate Limited] Retry {attempt + 1}/{max_retries} in {wait:.0f}s...")
             await asyncio.sleep(wait)
+
+
+def _save_test_file(result, output_path: str) -> None:
+    """Extract the .spec.ts content from agent messages and write it to disk."""
+    full_output = "\n".join(
+        msg.content
+        for msg in result.messages
+        if hasattr(msg, "content") and isinstance(msg.content, str)
+    )
+    match = re.search(
+        r"===BEGIN_PLAYWRIGHT_TEST===\n(.*?)\n===END_PLAYWRIGHT_TEST===",
+        full_output,
+        re.DOTALL,
+    )
+    if match:
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(match.group(1))
+        print(f"\n[Test saved → {output_path}]")
+    else:
+        print("\n[Warning] No test file found between markers in agent output.")
 
 
 async def fetch_jira_bugs(jira: McpWorkbench) -> str:
@@ -222,9 +328,10 @@ async def main() -> None:
 
     # Both agents share the same org rate limit (30k TPM).
     # Route all calls through one ThrottledClient so analyst + playwright
-    # calls are serialised and paced. The playwright workbench alone sends
-    # ~20-25k tokens of tool schemas per call → 65s gap keeps us under 30k TPM.
-    shared_throttled = ThrottledClient(base_client, delay_seconds=65)
+    # calls are serialised and paced. Instead of a fixed 65s gap, the client
+    # tracks actual token usage per response in a rolling 60s window and only
+    # blocks when the budget is genuinely exhausted.
+    shared_throttled = ThrottledClient(base_client, tpm_limit=30_000, safety_buffer=3_000, min_delay=2.0)
     analyst_client = shared_throttled
     playwright_client = shared_throttled
 
@@ -244,7 +351,14 @@ async def main() -> None:
     playwright_server_params = StdioServerParams(
         command="npx", args=["@playwright/mcp@latest"], env={}, read_timeout_seconds=120
     )
-    playwright_workbench = McpWorkbench(playwright_server_params)
+    # Both browser_snapshot (accessibility tree) and browser_take_screenshot
+    # (base64 image) can each consume 20k–80k+ tokens per call. Hide both —
+    # the agent derives all the context it needs from the structured text output
+    # already embedded in browser_navigate and action results.
+    playwright_workbench = FilteredWorkbench(
+        McpWorkbench(playwright_server_params),
+        exclude={"browser_snapshot", "browser_take_screenshot"},
+    )
 
     _prompts_dir = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "prompts"
@@ -271,10 +385,11 @@ async def main() -> None:
             name="playwrightAgent",
             model_client=playwright_client,
             workbench=playwright,
-            # buffer_size=3: each snapshot can be 200k+ tokens; keeping only
-            # the last 3 messages (+ trimming in ThrottledClient) stays well
-            # under the 1M context-window limit.
-            model_context=BufferedChatCompletionContext(buffer_size=3),
+            # browser_snapshot and browser_take_screenshot are excluded, so
+            # individual messages are small (~5k tokens each). A buffer of 20
+            # gives the agent enough history to remember previous steps and
+            # avoid looping without approaching the context window limit.
+            model_context=BufferedChatCompletionContext(buffer_size=20),
             system_message=load_system_message(
                 os.path.join(_prompts_dir, "playwright_analyst_prompt.txt")
             ),
@@ -295,7 +410,12 @@ async def main() -> None:
             termination_condition=TextMentionTermination("TESTING COMPLETE"),
         )
 
-        await run_with_retry(team, task=task)
+        _output_dir = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "output", "tests"
+        )
+        output_path = os.path.join(_output_dir, "greenkart.spec.ts")
+
+        await run_with_retry(team, task=task, output_path=output_path)
 
     await base_client.close()
 
