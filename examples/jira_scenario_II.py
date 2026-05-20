@@ -420,4 +420,5 @@ async def main() -> None:
     await base_client.close()
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
