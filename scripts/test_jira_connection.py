@@ -1,115 +1,84 @@
 #!/usr/bin/env python3
-"""
-Simple Jira connection test to debug issues
-"""
+"""Simple Jira connection test to debug issues."""
 
-import asyncio
-import os
-from dotenv import load_dotenv
-from autogen_ext.tools.mcp import StdioServerParams, McpWorkbench
+import json
 
-load_dotenv()
+import pytest
+from autogen_ext.tools.mcp import McpWorkbench
 
 
-async def test_jira_connection():
-    """Test basic Jira connectivity and search."""
+QUERY_MATRIX = [
+    {"jql": "project = KAN", "description": "All issues in KAN project"},
+    {"jql": "project = KAN AND issuetype = Bug", "description": "Bugs in KAN project"},
+    {"jql": "key >= KAN-1", "description": "Issues from KAN-1 onwards"},
+    {"jql": "key = KAN-5", "description": "Specific issue KAN-5"},
+    {"jql": "project = KAN ORDER BY created DESC", "description": "Recent KAN issues"},
+]
 
-    def get_required_env(key: str) -> str:
-        value = os.getenv(key)
-        if not value:
-            raise RuntimeError(f"{key} environment variable not found")
-        return value
 
-    jira_server_params = StdioServerParams(
-        command="uvx",
-        args=["mcp-atlassian"],
-        env={
-            "JIRA_URL": get_required_env("JIRA_URL"),
-            "JIRA_USERNAME": get_required_env("JIRA_USERNAME"),
-            "JIRA_API_TOKEN": get_required_env("JIRA_API_TOKEN"),
-            "TOOLSETS": "all",  # Set explicit toolsets to avoid warning
-        },
-        read_timeout_seconds=60,
-    )
+def _tool_name(tool: object) -> str:
+    if isinstance(tool, dict):
+        return str(tool.get("name", "Unknown"))
+    return str(getattr(tool, "name", "Unknown"))
+
+
+def _result_content(result: object) -> str:
+    if hasattr(result, "result") and getattr(result, "result"):
+        return getattr(result, "result")[0].content
+    if hasattr(result, "content"):
+        return str(getattr(result, "content"))
+    return str(result)
+
+
+@pytest.mark.asyncio
+async def test_jira_connection(jira_server_params):
+    """Test basic Jira connectivity and a few representative search queries."""
 
     async with McpWorkbench(jira_server_params) as jira:
         print("🔗 Connected to Jira MCP server")
 
-        # List available tools
-        try:
-            tools = await jira.list_tools()
-            print(f"📋 Available tools: {len(tools)} found")
+        tools = await jira.list_tools()
+        assert tools, "Expected Jira MCP server to expose tools"
 
-            for tool in tools:
-                tool_name = (
-                    tool.get("name", "Unknown")
-                    if isinstance(tool, dict)
-                    else getattr(tool, "name", "Unknown")
-                )
-                print(f"  - {tool_name}")
+        tool_names = [_tool_name(tool) for tool in tools]
+        print(f"📋 Available tools: {len(tool_names)} found")
+        for name in tool_names:
+            print(f"  - {name}")
 
-        except Exception as e:
-            print(f"❌ Error listing tools: {e}")
-            return
+        assert "jira_search" in tool_names, "jira_search tool is required for this test"
 
-        # Test different search queries
-        queries_to_test = [
-            {"jql": "project = KAN", "description": "All issues in KAN project"},
-            {
-                "jql": "project = KAN AND issuetype = Bug",
-                "description": "Bugs in KAN project",
-            },
-            {"jql": "key >= KAN-1", "description": "Issues from KAN-1 onwards"},
-            {"jql": "key = KAN-5", "description": "Specific issue KAN-5"},
-            {
-                "jql": "project = KAN ORDER BY created DESC",
-                "description": "Recent KAN issues",
-            },
-        ]
-
-        for query_info in queries_to_test:
+        for query_info in QUERY_MATRIX:
             jql = query_info["jql"]
             desc = query_info["description"]
             print(f"\n🔍 Testing: {desc}")
             print(f"   JQL: {jql}")
 
-            try:
-                # Call jira_search function directly
-                result = await jira.call_tool(
-                    "jira_search",
-                    {
-                        "jql": jql,
-                        "fields": "summary,status,priority,description,created,reporter,assignee",
-                        "limit": 10,
-                    },
-                )
+            result = await jira.call_tool(
+                "jira_search",
+                {
+                    "jql": jql,
+                    "fields": "summary,status,priority,description,created,reporter,assignee",
+                    "limit": 10,
+                },
+            )
 
-                if hasattr(result, "content"):
-                    import json
+            data = json.loads(_result_content(result))
+            total = data.get("total", 0)
+            issues = data.get("issues", [])
 
-                    data = json.loads(result.content)
-                    total = data.get("total", 0)
-                    issues = data.get("issues", [])
+            assert isinstance(total, int)
+            assert isinstance(issues, list)
 
-                    print(
-                        f"✅ Success! Found {total} issues, returned {len(issues)} issues"
-                    )
+            print(f"✅ Success! Found {total} issues, returned {len(issues)} issues")
 
-                    if issues:
-                        for issue in issues[:3]:  # Show first 3
-                            key = issue.get("key", "Unknown")
-                            summary = issue.get("fields", {}).get(
-                                "summary", "No summary"
-                            )
-                            print(f"   📝 {key}: {summary}")
-                    else:
-                        print("   ℹ️  No issues returned")
-                else:
-                    print(f"✅ Result: {result}")
-
-            except Exception as e:
-                print(f"❌ Error with query '{jql}': {e}")
+            if issues:
+                for issue in issues[:3]:
+                    key = issue.get("key", "Unknown")
+                    summary = issue.get("fields", {}).get("summary", "No summary")
+                    print(f"   📝 {key}: {summary}")
+            else:
+                print("   ℹ️  No issues returned")
 
 
 if __name__ == "__main__":
-    asyncio.run(test_jira_connection())
+    raise SystemExit(pytest.main([__file__]))
